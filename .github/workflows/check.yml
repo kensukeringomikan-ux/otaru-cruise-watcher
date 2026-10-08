@@ -2,7 +2,7 @@ name: Otaru cruise availability check
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "2-59/5 * * * *"
       timezone: "Asia/Tokyo"
   workflow_dispatch:
 
