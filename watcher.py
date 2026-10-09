@@ -195,9 +195,9 @@ for t in found:
     except Exception as e:
         log(f"時刻 {t} の確認失敗: {e}")
 
-log("画面上で検出した時刻: " + ", ".join(found))
-log("空席判定結果: " + ", ".join(sorted(set(available))))
-return sorted(set(available))
+    log("画面上で検出した時刻: " + ", ".join(found))
+    log("空席判定結果: " + ", ".join(sorted(set(available))))
+    return sorted(set(available))
 
 
 def check_target(page, target):
