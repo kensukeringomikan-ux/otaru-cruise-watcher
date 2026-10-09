@@ -29,6 +29,17 @@
       "infants": 0,
       "preferred_times": ["17:30", "18:00", "19:00"],
       "label": "第二希望：10/19 その他の時間 大人2名"
+    },
+    
+    {
+      "priority": 3,
+      "date": "2026-10-10",
+      "course": "night",
+      "adults": 1,
+      "children": 0,
+      "infants": 0,
+      "preferred_times": ["17:30", "18:00", "18:30", "19:00"],
+      "label": "テスト：10/10 ナイトクルーズ 大人1名"
     }
   ]
 }
