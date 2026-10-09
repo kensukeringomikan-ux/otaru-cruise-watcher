@@ -166,37 +166,28 @@ def select_date(page, date_str):
             pass
 
     raise RuntimeError(f"日付を選択できません: {date_str}")
-    
+
+
+def get_times(page, target):
+    text = page.locator("body").inner_text()
+    found = sorted(set(re.findall(r"\b(?:[01]\d|2[0-3]):[0-5]\d\b", text)))
+    wanted = set(target.get("preferred_times", []))
+    if wanted:
+        found = [x for x in found if x in wanted]
+
     available = []
-for t in found:
-    try:
-        loc = page.get_by_text(t, exact=True)
-        for i in range(loc.count()):
-            el = loc.nth(i)
-            if not el.is_visible():
-                continue
-
-            info = {
-                "time": t,
-                "tag": el.evaluate("(e) => e.tagName"),
-                "disabled": el.get_attribute("disabled"),
-                "aria_disabled": el.get_attribute("aria-disabled"),
-                "class": el.get_attribute("class"),
-                "role": el.get_attribute("role"),
-            }
-            log("時刻要素の状態: " + json.dumps(info, ensure_ascii=False))
-
-            if (
-                el.get_attribute("disabled") is None
-                and el.get_attribute("aria-disabled") != "true"
-            ):
-                available.append(t)
-                break
-    except Exception as e:
-        log(f"時刻 {t} の確認失敗: {e}")
-
-    log("画面上で検出した時刻: " + ", ".join(found))
-    log("空席判定結果: " + ", ".join(sorted(set(available))))
+    for t in found:
+        try:
+            loc = page.get_by_text(t, exact=True)
+            for i in range(loc.count()):
+                el = loc.nth(i)
+                if not el.is_visible():
+                    continue
+                if el.get_attribute("disabled") is None and el.get_attribute("aria-disabled") != "true":
+                    available.append(t)
+                    break
+        except Exception:
+            pass
     return sorted(set(available))
 
 
