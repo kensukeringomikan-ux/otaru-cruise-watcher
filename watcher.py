@@ -352,7 +352,7 @@ def get_times(page, target):
             page.wait_for_timeout(800)
 
             status = time_select.evaluate("""node => {
-                const re = /即時予約|予約不可|リクエスト予約|満席|空席なし/;
+                const re = /即時予約|予約不可|空席なし/;
                 // Search only nearby elements inside the same booking widget.
                 let panel = node;
                 for (let depth = 0; panel && depth < 8; depth++, panel = panel.parentElement) {
