@@ -169,8 +169,8 @@ def select_date(page, date_str):
 
 
 def get_times(page, target):
-    # The status badge is a sibling/nearby element of the time <select>,
-    # not necessarily inside an ancestor that contains the select.
+    # Only inspect the status badge in the same visible row as the time picker.
+    # Do not use calendar legend text elsewhere on the page.
     wanted = set(target.get("preferred_times", []))
     time_select = None
     candidates = []
@@ -207,41 +207,40 @@ def get_times(page, target):
             page.wait_for_timeout(600)
 
             status = time_select.evaluate("""node => {
-                const terms = /即時予約|予約不可|リクエスト予約|満席|空席なし/;
-                const found = [];
-                let current = node;
-                // Collect the nearest booking-panel text, and inspect nearby
-                // siblings because the badge is shown beside the time selector.
-                for (let depth = 0; current && depth < 5; depth++, current = current.parentElement) {
-                    const text = (current.innerText || current.textContent || '').trim();
-                    if (text && terms.test(text)) {
-                        found.push({depth, text: text.slice(0, 1600)});
+                const statusPattern = /即時予約|予約不可|リクエスト予約|満席|空席なし/;
+                // Look only at the select's immediate visual row and its direct
+                // children/siblings. Avoid scanning ancestors containing the calendar.
+                const row = node.parentElement;
+                if (!row) return '';
+                const candidates = [];
+                for (const el of [row, ...Array.from(row.children), ...Array.from(row.querySelectorAll('*'))]) {
+                    if (!el || el === node || node.contains(el)) continue;
+                    const text = (el.innerText || el.textContent || '').trim();
+                    if (text && text.length <= 120 && statusPattern.test(text)) {
+                        candidates.push({el, text});
                     }
                 }
-                const parent = node.parentElement;
-                if (parent) {
-                    for (const sibling of parent.parentElement ? Array.from(parent.parentElement.children) : []) {
-                        const text = (sibling.innerText || sibling.textContent || '').trim();
-                        if (text && terms.test(text)) found.push({depth: 'sibling', text: text.slice(0, 500)});
-                    }
-                }
-                return found.sort((a,b) => String(a.depth).length - String(b.depth).length)[0]?.text || '';
+                // Prefer the smallest element containing an explicit status.
+                candidates.sort((a, b) => {
+                    const aSize = (a.el.innerText || a.el.textContent || '').trim().length;
+                    const bSize = (b.el.innerText || b.el.textContent || '').trim().length;
+                    return aSize - bSize;
+                });
+                return candidates[0]?.text || '';
             }""")
 
-            # Require the explicit positive badge; absence of a readable badge
-            # is unknown, never availability.
             if re.search(r"即時予約", status):
                 available.append(time_text)
-                log(f"{target['label']}: {time_text} 「即時予約」を検出")
+                log(f"{target['label']}: {time_text} 同じ行に「即時予約」を検出")
             elif re.search(r"予約不可|リクエスト予約|満席|空席なし", status):
-                log(f"{target['label']}: {time_text} 即時予約ではない表示を検出")
+                log(f"{target['label']}: {time_text} 同じ行に予約不可等の表示を検出")
             else:
-                log(f"{target['label']}: {time_text} 判定できる予約ステータスなし。誤通知防止のため除外")
+                log(f"{target['label']}: {time_text} 同じ行の予約ステータスなし。誤通知防止のため除外")
         except Exception as e:
             log(f"{target['label']}: {time_text} 判定失敗 ({type(e).__name__}); 誤通知防止のため除外")
 
     result = sorted(set(available))
-    log(f"{target['label']}: 時刻候補={','.join(sorted(seen)) if seen else 'なし'} / 即時予約確認済み={','.join(result) if result else 'なし'}")
+    log(f"{target['label']}: 時刻候補={','.join(sorted(seen)) if seen else 'なし'} / 同じ行で即時予約確認済み={','.join(result) if result else 'なし'}")
     return result
 
 def check_target(page, target):
