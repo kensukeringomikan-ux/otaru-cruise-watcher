@@ -363,9 +363,12 @@ def get_times(page, target):
                     const b = el.getBoundingClientRect();
                     if (b.width === 0 || b.height === 0) continue;
                     const y = b.top + b.height / 2;
-                    if (Math.abs(y - targetY) <= Math.max(24, r.height * 2) &&
-                        b.right >= r.left - 80 && b.left <= r.right + 260) {
-                        found.push({text, distance: Math.abs(y-targetY), width: b.width});
+                    // The booking widget may place the status badge slightly below the time control.
+                    // Keep the search near the control so the static legend below the calendar
+                    // is not mistaken for the selected time's status.
+                    if (Math.abs(y - targetY) <= Math.max(110, r.height * 4) &&
+                        b.right >= r.left - 180 && b.left <= r.right + 480) {
+                        found.push({text, distance: Math.abs(y-targetY), width: b.width, x: Math.round(b.left), y: Math.round(b.top)});
                     }
                 }
                 found.sort((a,b) => a.distance-b.distance || a.width-b.width);
