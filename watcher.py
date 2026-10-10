@@ -127,43 +127,46 @@ def set_people(page, target):
 def select_date(page, date_str):
     target = datetime.strptime(date_str, "%Y-%m-%d")
     wanted_month = f"{target.year}年{target.month}月"
-    calendar = page.locator(".widget-calendar").first
-    if calendar.count() == 0:
+
+    # The first calendar belongs to the page overview; booking calendar is the last one.
+    calendars = page.locator(".widget-calendar")
+    if calendars.count() == 0:
         raise RuntimeError("予約カレンダーが見つかりません")
+    calendar = calendars.last
 
     for _ in range(24):
         if wanted_month in calendar.inner_text():
             break
         next_button = calendar.locator("button.widget-calendar__month__nav__next")
         if next_button.count() == 0:
-            raise RuntimeError(f"対象月へ移動できません: {wanted_month}")
+            raise RuntimeError(f"予約カレンダーで対象月へ移動できません: {wanted_month}")
         next_button.first.click()
         page.wait_for_timeout(250)
     if wanted_month not in calendar.inner_text():
-        raise RuntimeError(f"予約カレンダーの月が一致しません: {wanted_month}")
+        raise RuntimeError(f"予約カレンダーの表示月が一致しません: {wanted_month}")
 
-    # The calendar only renders selectable dates as radios, so the nth radio
-    # is NOT the calendar day number. Match the radio's value exactly instead.
-    day_value = str(target.day)
-    day = calendar.locator('input[type="radio"][name="day"]').filter(
-        has=page.locator("option")
-    )
-    day = calendar.locator('input[type="radio"][name="day"][value="' + day_value + '"]')
-    if day.count() == 0:
-        snapshot = calendar.locator('input[type="radio"][name="day"]').evaluate_all(
-            "els => els.map(el => ({value: el.value, checked: el.checked, disabled: el.disabled}))"
-        )
-        raise RuntimeError(
-            f"予約カレンダーで{target.day}日を選択できません（選択可能日なし）: "
-            + json.dumps(snapshot, ensure_ascii=False)[:500]
-        )
-    try:
-        day.first.check(force=True)
-    except Exception:
-        label = day.first.locator("xpath=ancestor::label[1]")
-        if label.count() == 0:
-            label = day.first.locator("xpath=..")
-        label.click(force=True)
+    day_text = str(target.day)
+    # Calendar radios have no explicit value; select the label displaying the day.
+    labels = calendar.locator("label")
+    candidates = []
+    for i in range(labels.count()):
+        label = labels.nth(i)
+        text = " ".join(label.inner_text().split())
+        if text == day_text:
+            candidates.append(label)
+    if not candidates:
+        # Some versions place the day number beside the input rather than in a label.
+        radios = calendar.locator('input[type="radio"][name="day"]')
+        for i in range(radios.count()):
+            radio = radios.nth(i)
+            parent = radio.locator("xpath=..")
+            if " ".join(parent.inner_text().split()) == day_text:
+                candidates.append(parent)
+    if not candidates:
+        summary = calendar.inner_text().replace("\\n", " ")[:500]
+        raise RuntimeError(f"予約カレンダーで{target.day}日を見つけられません: {summary}")
+
+    candidates[0].click(force=True)
     page.wait_for_timeout(900)
     log(f"予約カレンダーの日付を選択: {date_str}")
 
