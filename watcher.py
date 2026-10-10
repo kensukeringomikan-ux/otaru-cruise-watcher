@@ -169,8 +169,8 @@ def select_date(page, date_str):
 
 
 def get_times(page, target):
-    # Only inspect the status badge in the same visible row as the time picker.
-    # Do not use calendar legend text elsewhere on the page.
+    # Confirm status from the badge visually aligned with the selected time.
+    # Bounding-box proximity avoids picking up the calendar legend elsewhere.
     wanted = set(target.get("preferred_times", []))
     time_select = None
     candidates = []
@@ -204,34 +204,33 @@ def get_times(page, target):
         seen.add(time_text)
         try:
             time_select.select_option(label=option_label)
-            page.wait_for_timeout(600)
+            page.wait_for_timeout(800)
 
             status = time_select.evaluate("""node => {
-                const statusPattern = /即時予約|予約不可|リクエスト予約|満席|空席なし/;
-                // Look only at the select's immediate visual row and its direct
-                // children/siblings. Avoid scanning ancestors containing the calendar.
-                const row = node.parentElement;
-                if (!row) return '';
-                const candidates = [];
-                for (const el of [row, ...Array.from(row.children), ...Array.from(row.querySelectorAll('*'))]) {
-                    if (!el || el === node || node.contains(el)) continue;
+                const re = /即時予約|予約不可|リクエスト予約|満席|空席なし/;
+                const r = node.getBoundingClientRect();
+                const targetY = r.top + r.height / 2;
+                const found = [];
+                for (const el of document.querySelectorAll('body *')) {
+                    if (el === node || node.contains(el) || el.children.length > 3) continue;
                     const text = (el.innerText || el.textContent || '').trim();
-                    if (text && text.length <= 120 && statusPattern.test(text)) {
-                        candidates.push({el, text});
+                    if (!text || text.length > 30 || !re.test(text)) continue;
+                    const b = el.getBoundingClientRect();
+                    if (b.width === 0 || b.height === 0) continue;
+                    const y = b.top + b.height / 2;
+                    // Status pill is on the same horizontal line as the time field.
+                    if (Math.abs(y - targetY) <= Math.max(18, r.height * 1.5) &&
+                        b.right >= r.left - 80 && b.left <= r.right + 260) {
+                        found.push({text, distance: Math.abs(y-targetY), width: b.width});
                     }
                 }
-                // Prefer the smallest element containing an explicit status.
-                candidates.sort((a, b) => {
-                    const aSize = (a.el.innerText || a.el.textContent || '').trim().length;
-                    const bSize = (b.el.innerText || b.el.textContent || '').trim().length;
-                    return aSize - bSize;
-                });
-                return candidates[0]?.text || '';
+                found.sort((a,b) => a.distance-b.distance || a.width-b.width);
+                return found[0]?.text || '';
             }""")
 
             if re.search(r"即時予約", status):
                 available.append(time_text)
-                log(f"{target['label']}: {time_text} 同じ行に「即時予約」を検出")
+                log(f"{target['label']}: {time_text} 同じ行の「即時予約」を検出")
             elif re.search(r"予約不可|リクエスト予約|満席|空席なし", status):
                 log(f"{target['label']}: {time_text} 同じ行に予約不可等の表示を検出")
             else:
