@@ -222,6 +222,31 @@ def get_times(page, target):
     candidates_by_select.sort(key=lambda x: x[0], reverse=True)
     score, time_select, candidates, context_preview = candidates_by_select[0]
     log(f"{target['label']}: 時刻プルダウン選択 score={score} / 周辺={context_preview.replace(chr(10), ' ')[:100]}")
+    # Temporary DOM diagnostics: identify the actual booking time control and status badges.
+    try:
+        details = time_select.evaluate("""node => {
+            const ancestors = [];
+            for (let el = node, depth = 0; el && depth < 5; el = el.parentElement, depth++) {
+                ancestors.push({depth, tag: el.tagName, cls: String(el.className || '').slice(0,120),
+                    text: (el.innerText || '').trim().replace(/\s+/g, ' ').slice(0,220),
+                    html: el.outerHTML.slice(0,650)});
+            }
+            const matches = [];
+            for (const el of document.querySelectorAll('body *')) {
+                const t = (el.innerText || el.textContent || '').trim();
+                if ((t === '即時予約' || t === '予約不可') && el.children.length < 3) {
+                    const b = el.getBoundingClientRect();
+                    if (b.width && b.height) matches.push({text:t, tag:el.tagName,
+                        cls:String(el.className || '').slice(0,100),
+                        html:el.outerHTML.slice(0,300), x:Math.round(b.x), y:Math.round(b.y)});
+                }
+            }
+            return {ancestors, statuses:matches.slice(0,20)};
+        }""")
+        log(f"{target['label']}: DOM診断 " + json.dumps(details, ensure_ascii=False)[:3500])
+    except Exception as e:
+        log(f"{target['label']}: DOM診断失敗 {type(e).__name__}")
+
     if score < 20:
         log(f"{target['label']}: 予約欄の時刻プルダウンと確認できないため、誤通知防止で除外")
         return []
