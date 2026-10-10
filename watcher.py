@@ -198,7 +198,9 @@ def select_date(page, date_str):
             const input = el.querySelector('input[type="radio"]') ||
                 (el.previousElementSibling && el.previousElementSibling.matches('input[type="radio"]') ? el.previousElementSibling : null);
             return {cls:String(el.className || ''), checked:input ? input.checked : null,
-                disabled:input ? input.disabled : null, html:el.outerHTML.slice(0,220)};
+                disabled:input ? input.disabled : null, html:el.outerHTML.slice(0,220),
+                parentHtml:el.parentElement ? el.parentElement.outerHTML.slice(0,650) : '',
+                inputSummary:[...el.parentElement?.querySelectorAll('input[name="day"]') || []].map(x=>({value:x.value,checked:x.checked,disabled:x.disabled,cls:x.className}))};
         }""")
         diagnostics.append(info)
         if "fully_booked" in info["cls"] or "disabled" in info["cls"] or info["disabled"] is True:
