@@ -215,13 +215,17 @@ def select_date(page, date_str):
             # fail to update React state in this calendar under headless Chromium.
             day_input = label.locator('input[name="day"]')
             if day_input.count():
-                day_input.check(force=True)
+                day_input.evaluate("""el => {
+                    el.click();
+                    el.dispatchEvent(new Event('input', {bubbles:true}));
+                    el.dispatchEvent(new Event('change', {bubbles:true}));
+                }""")
             else:
                 label.click(force=True)
-            page.wait_for_timeout(700)
-            selected = label.locator('input[name="day"]:checked').count() > 0
+            page.wait_for_timeout(900)
+            selected = calendar.locator('input[name="day"]:checked').count() > 0
             time_select = panel.locator('select[name="productInstanceId"]')
-            if selected and time_select.count() and time_select.first.locator("option").count() > 1:
+            if selected:
                 # Capture the selected calendar cell's real DOM status, not the static legend.
                 try:
                     cell_status = label.evaluate("""el => {
