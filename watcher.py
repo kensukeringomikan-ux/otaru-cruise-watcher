@@ -191,18 +191,25 @@ def get_times(page, target):
             # The schedule dropdown elsewhere on the page must not be used.
             context = select.evaluate("""node => {
                 let el = node;
-                for (let depth = 0; el && depth < 10; depth++, el = el.parentElement) {
+                let best = '';
+                for (let depth = 0; el && depth < 7; depth++, el = el.parentElement) {
                     const text = (el.innerText || '').trim();
-                    const hasTime = /(?:17:30|18:00|18:30|19:00)/.test(text);
-                    if (hasTime && /参加人数を選択/.test(text) && /今すぐ予約する/.test(text)) {
-                        return {text, foundBookingPanel: true, depth};
+                    if (text.length > best.length && text.length < 1800) best = text;
+                    if (/今すぐ予約する/.test(text) && /参加人数を選択/.test(text)) {
+                        return {text, foundBookingPanel: true};
                     }
                 }
-                return {text: '', foundBookingPanel: false, depth: -1};
+                return {text: best, foundBookingPanel: false};
             }""")
-            score = 100 if context.get("foundBookingPanel") else 0
+            score = 0
+            if context.get("foundBookingPanel"):
+                score += 100
             context_text = context.get("text", "")
-            if context.get("depth", 99) <= 5:
+            if "日付と時間を指定" in context_text:
+                score += 20
+            if "参加人数を選択" in context_text:
+                score += 20
+            if "今すぐ予約する" in context_text:
                 score += 20
             candidates_by_select.append((score, select, matches, context_text[:180]))
         except Exception:
@@ -231,32 +238,100 @@ def get_times(page, target):
 
             status = time_select.evaluate("""node => {
                 const re = /即時予約|予約不可|リクエスト予約|満席|空席なし/;
-                let panel = null;
-                // Use the smallest ancestor containing the booking heading and this time control.
-                for (let el = node; el && el.parentElement; el = el.parentElement) {
-                    const text = (el.innerText || '').trim();
-                    if (/今すぐ予約する/.test(text) && /参加人数を選択/.test(text) &&
-                        /(?:17:30|18:00|18:30|19:00)/.test(text)) {
-                        panel = el;
-                        break;
-                    }
+                // Search only nearby elements inside the same booking widget.
+                let panel = node;
+                for (let depth = 0; panel && depth < 8; depth++, panel = panel.parentElement) {
+                    const text = (panel.innerText || '').trim();
+                    if (/今すぐ予約する/.test(text) && /参加人数を選択/.test(text)) break;
                 }
                 if (!panel) return '';
                 const r = node.getBoundingClientRect();
                 const targetY = r.top + r.height / 2;
                 const found = [];
                 for (const el of panel.querySelectorAll('*')) {
-                    if (el === node || node.contains(el) || el.children.length > 2) continue;
+                    if (el === node || node.contains(el) || el.children.length > 3) continue;
                     const text = (el.innerText || el.textContent || '').trim();
                     if (!text || text.length > 24 || !re.test(text)) continue;
                     const b = el.getBoundingClientRect();
                     if (b.width === 0 || b.height === 0) continue;
                     const y = b.top + b.height / 2;
-                    if (Math.abs(y - targetY) <= Math.max(40, r.height * 3) &&
-                        b.right >= r.left - 100 && b.left <= r.right + 350) {
+                    if (Math.abs(y - targetY) <= Math.max(24, r.height * 2) &&
+                        b.right >= r.left - 80 && b.left <= r.right + 260) {
                         found.push({text, distance: Math.abs(y-targetY), width: b.width});
                     }
                 }
                 found.sort((a,b) => a.distance-b.distance || a.width-b.width);
                 return found[0]?.text || '';
             }""")
+
+            if re.search(r"即時予約", status):
+                available.append(time_text)
+                log(f"{target['label']}: {time_text} 予約欄の同じ行に「即時予約」を検出")
+            elif re.search(r"予約不可|リクエスト予約|満席|空席なし", status):
+                log(f"{target['label']}: {time_text} 予約欄の同じ行に予約不可等の表示を検出")
+            else:
+                log(f"{target['label']}: {time_text} 予約欄の同じ行の予約ステータスなし。誤通知防止のため除外")
+        except Exception as e:
+            log(f"{target['label']}: {time_text} 判定失敗 ({type(e).__name__}); 誤通知防止のため除外")
+
+    result = sorted(set(available))
+    log(f"{target['label']}: 時刻候補={','.join(sorted(seen)) if seen else 'なし'} / 予約欄で即時予約確認済み={','.join(result) if result else 'なし'}")
+    return result
+
+def check_target(page, target):
+    page.goto(URLS[target["course"]], wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(1500)
+    set_people(page, target)
+    select_date(page, target["date"])
+    page.wait_for_timeout(1000)
+    return get_times(page, target)
+
+
+def test_line():
+    send_line("✅ 小樽運河クルーズ監視ツールのLINE通知テストです。")
+    log("LINEテスト通知を送信しました。")
+
+
+def main():
+    if os.environ.get("TEST_LINE") == "1":
+        test_line()
+        return
+
+    log("小樽運河クルーズ空席チェックを開始")
+    state = load_state()
+    changed = False
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(locale="ja-JP", timezone_id="Asia/Tokyo")
+        try:
+            for target in TARGETS:
+                key = target_key(target)
+                try:
+                    slots = check_target(page, target)
+                    current = sorted(set(slots))
+                    old = set(state.get(key, []))
+                    new_slots = sorted(set(current) - old)
+
+                    if new_slots:
+                        notify(target, new_slots)
+
+                    if current != sorted(old):
+                        state[key] = current
+                        changed = True
+
+                    log(f"{target['label']}: {', '.join(current) if current else '空きなし'}")
+                except PlaywrightTimeoutError:
+                    log(f"{target['label']}: タイムアウト")
+                except Exception as e:
+                    log(f"{target['label']}: チェック失敗: {type(e).__name__}: {e}")
+        finally:
+            browser.close()
+
+    if changed:
+        save_state(state)
+        log("通知済み状態を保存しました。")
+
+
+if __name__ == "__main__":
+    main()
