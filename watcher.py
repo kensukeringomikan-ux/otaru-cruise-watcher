@@ -357,7 +357,7 @@ def get_times(page, target):
         log(f"{target['label']}: 時刻別オプション " + json.dumps(option_data, ensure_ascii=False)[:2500])
         option_by_time = {}
         for option in option_data:
-            match = re.search(r"\\b(?:[01]\\d|2[0-3]):[0-5]\\d\\b", option.get("label", ""))
+            match = re.search(r"\b(?:[01]\d|2[0-3]):[0-5]\d\b", option.get("label", ""))
             if match:
                 option_by_time[match.group(0)] = option
 
