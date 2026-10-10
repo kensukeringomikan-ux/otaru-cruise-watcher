@@ -341,60 +341,49 @@ def get_times(page, target):
         log(f"{target['label']}: 予約欄の時刻プルダウンと確認できないため、誤通知防止で除外")
         return []
 
-    available = []
-    seen = set()
-    for time_text, option_label in candidates:
-        if time_text in seen:
-            continue
-        seen.add(time_text)
-        try:
-            time_select.select_option(label=option_label)
-            page.wait_for_timeout(800)
-
-            status = time_select.evaluate("""node => {
-                const re = /即時予約|リクエスト予約|予約不可|空席なし/;
-                // Search only nearby elements inside the same booking widget.
-                let panel = node;
-                for (let depth = 0; panel && depth < 8; depth++, panel = panel.parentElement) {
-                    const text = (panel.innerText || '').trim();
-                    if (/今すぐ予約する/.test(text) && /参加人数を選択/.test(text)) break;
+    # Availability is represented by the selected date's calendar label class
+    # (instant/request/fully_booked). The nearby text "即時予約" also appears
+    # in the static legend, so geometric proximity to that text is not reliable.
+    try:
+        day_status = time_select.evaluate("""node => {
+            let panel = node;
+            for (let depth = 0; panel && depth < 10; depth++, panel = panel.parentElement) {
+                if (/今すぐ予約する/.test(panel.innerText || '') &&
+                    /参加人数を選択/.test(panel.innerText || '') &&
+                    panel.querySelector('input[name="day"]:checked')) {
+                    const input = panel.querySelector('input[name="day"]:checked');
+                    const label = input.closest('label');
+                    return {
+                        className: String(label?.className || ''),
+                        day: (label?.innerText || '').trim(),
+                        selected: !!input.checked
+                    };
                 }
-                if (!panel) return '';
-                const r = node.getBoundingClientRect();
-                const targetY = r.top + r.height / 2;
-                const found = [];
-                for (const el of panel.querySelectorAll('*')) {
-                    if (el === node || node.contains(el) || el.children.length > 3) continue;
-                    const text = (el.innerText || el.textContent || '').trim();
-                    if (!text || text.length > 24 || !re.test(text)) continue;
-                    const b = el.getBoundingClientRect();
-                    if (b.width === 0 || b.height === 0) continue;
-                    const y = b.top + b.height / 2;
-                    // The booking widget may place the status badge slightly below the time control.
-                    // Keep the search near the control so the static legend below the calendar
-                    // is not mistaken for the selected time's status.
-                    if (Math.abs(y - targetY) <= Math.max(110, r.height * 4) &&
-                        b.right >= r.left - 180 && b.left <= r.right + 480) {
-                        found.push({text, distance: Math.abs(y-targetY), width: b.width, x: Math.round(b.left), y: Math.round(b.top)});
-                    }
-                }
-                found.sort((a,b) => a.distance-b.distance || a.width-b.width);
-                return found[0]?.text || '';
-            }""")
+            }
+            return null;
+        }""")
+    except Exception:
+        day_status = None
 
-            if re.search(r"即時予約|リクエスト予約", status):
-                available.append(time_text)
-                log(f"{target['label']}: {time_text} 予約可能ステータスを検出（{status}）")
-            elif re.search(r"予約不可|満席|空席なし", status):
-                log(f"{target['label']}: {time_text} 予約不可ステータスを検出（{status}）")
-            else:
-                log(f"{target['label']}: {time_text} 予約欄の同じ行の予約ステータスなし。誤通知防止のため除外")
-        except Exception as e:
-            log(f"{target['label']}: {time_text} 判定失敗 ({type(e).__name__}); 誤通知防止のため除外")
+    log(f"{target['label']}: 選択日ステータス " + json.dumps(day_status, ensure_ascii=False))
+    if not day_status or not day_status.get("selected"):
+        log(f"{target['label']}: 選択日の状態を確認できないため、誤通知防止で除外")
+        return []
+    day_classes = set(str(day_status.get("className", "")).split())
+    if "fully_booked" in day_classes or "disabled" in day_classes:
+        log(f"{target['label']}: カレンダー上で満席の日のため空席なし")
+        return []
+    if not ({"instant", "request"} & day_classes):
+        log(f"{target['label']}: カレンダーの日付クラスが不明なため、誤通知防止で除外")
+        return []
 
-    result = sorted(set(available))
-    log(f"{target['label']}: 時刻候補={','.join(sorted(seen)) if seen else 'なし'} / 空席判定={','.join(result) if result else 'なし'}")
-    return result
+    # The booking widget's time dropdown contains the actual bookable departure
+    # instances. Do not infer a time's status from the static legend text.
+    # A date marked instant/request with a real time option means that option
+    # can be selected for booking; preserve only the requested times.
+    available = sorted({time_text for time_text, _ in candidates})
+    log(f"{target['label']}: カレンダー状態={','.join(sorted(day_classes))} / 時刻候補={','.join(sorted({t for t, _ in candidates}))} / 空席判定={','.join(available) if available else 'なし'}")
+    return available
 
 def check_target(page, target):
     page.goto(URLS[target["course"]], wait_until="domcontentloaded", timeout=60000)
