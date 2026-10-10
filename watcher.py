@@ -127,10 +127,36 @@ def set_people(page, target):
 def select_date(page, date_str):
     target = datetime.strptime(date_str, "%Y-%m-%d")
     wanted_month = f"{target.year}年{target.month}月"
-    calendars = page.locator(".widget-calendar")
-    if calendars.count() == 0:
-        raise RuntimeError("予約カレンダーが見つかりません")
-    calendar = calendars.last
+
+    # Find the calendar from the booking panel, not by choosing the last calendar
+    # on the whole page (the page also has a separate schedule/overview widget).
+    booking_calendar = page.evaluate("""() => {
+        const heading = [...document.querySelectorAll('body *')].find(el =>
+            el.children.length === 0 && (el.textContent || '').trim() === '今すぐ予約する');
+        if (!heading) return false;
+        let panel = heading;
+        for (let i = 0; panel && i < 12; i++, panel = panel.parentElement) {
+            if (/参加人数を選択/.test(panel.innerText || '') &&
+                /日付と時間を指定/.test(panel.innerText || '') &&
+                panel.querySelector('input[name="day"]')) {
+                return panel.querySelector('.widget-calendar');
+            }
+        }
+        return false;
+    }""")
+    # Use the exact booking panel selector again as a Playwright locator.
+    heading = page.locator("text=今すぐ予約する").last
+    panel = heading
+    for _ in range(12):
+        try:
+            if panel.locator('input[name="day"]').count() and "参加人数を選択" in panel.inner_text():
+                break
+            panel = panel.locator("xpath=..")
+        except Exception:
+            panel = panel.locator("xpath=..")
+    calendar = panel.locator(".widget-calendar").first
+    if calendar.count() == 0:
+        raise RuntimeError("予約欄のカレンダーが見つかりません")
 
     for _ in range(24):
         if wanted_month in calendar.inner_text():
@@ -145,41 +171,37 @@ def select_date(page, date_str):
 
     day_text = str(target.day)
     labels = calendar.locator("label")
-    matched = []
+    diagnostics = []
     for i in range(labels.count()):
         label = labels.nth(i)
-        if " ".join(label.inner_text().split()) == day_text:
-            matched.append(label)
-
-    for label in matched:
+        text = " ".join(label.inner_text().split())
+        if text != day_text:
+            continue
+        info = label.evaluate("""el => {
+            const input = el.querySelector('input[type="radio"]') ||
+                (el.previousElementSibling && el.previousElementSibling.matches('input[type="radio"]') ? el.previousElementSibling : null);
+            return {text:(el.innerText || '').trim(), cls:String(el.className || ''),
+                checked:input ? input.checked : null, disabled:input ? input.disabled : null,
+                html:el.outerHTML.slice(0,300)};
+        }""")
+        diagnostics.append(info)
+        if "fully_booked" in info["cls"] or "disabled" in info["cls"] or info["disabled"] is True:
+            continue
         try:
-            radio = label.locator('input[type="radio"][name="day"]')
-            if radio.count() and radio.first.is_disabled():
-                continue
             label.click(force=True)
             page.wait_for_timeout(700)
-            time_select = calendar.locator('select[name="productInstanceId"]')
-            if time_select.count() and time_select.first.locator("option").count() > 1:
+            selected = calendar.locator('input[name="day"]:checked').count() > 0
+            time_select = panel.locator('select[name="productInstanceId"]')
+            if selected and time_select.count() and time_select.first.locator("option").count() > 1:
                 log(f"予約カレンダーの日付を選択: {date_str}")
                 return
         except Exception:
-            continue
+            pass
 
-    # A click alone is not proof that a date was selected. Dump only the target-day
-    # controls so sold-out/disabled days are not misreported as selected.
-    detail = calendar.evaluate("""root => {
-        const out = [];
-        for (const el of root.querySelectorAll('label')) {
-            if ((el.innerText || '').trim() === DAY) {
-                const r = el.querySelector('input[type="radio"]') ||
-                          (el.previousElementSibling && el.previousElementSibling.matches('input[type="radio"]') ? el.previousElementSibling : null);
-                out.push({label:el.outerHTML.slice(0,350), checked: r ? r.checked : null,
-                          disabled: r ? r.disabled : null, cls:String(el.className || '')});
-            }
-        }
-        return out.slice(0,6);
-    }""".replace("DAY", json.dumps(day_text)))
-    raise RuntimeError(f"予約日を選択できません（満席または選択操作未完了）: {date_str} / " + json.dumps(detail, ensure_ascii=False)[:700])
+    raise RuntimeError(
+        f"予約欄カレンダーで日付を選択できません（満席または未選択）: {date_str} / "
+        + json.dumps(diagnostics, ensure_ascii=False)[:700]
+    )
 
 
 def get_times(page, target):
