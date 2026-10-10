@@ -169,8 +169,8 @@ def select_date(page, date_str):
 
 
 def get_times(page, target):
-    # A time option alone does not prove availability. Select each candidate
-    # and check the booking widget for its "予約不可" status badge.
+    # Do not infer availability from the option label. Select each time,
+    # then inspect the rendered booking page for its explicit status badge.
     wanted = set(target.get("preferred_times", []))
     time_select = None
     candidates = []
@@ -204,23 +204,23 @@ def get_times(page, target):
         seen.add(time_text)
         try:
             time_select.select_option(label=option_label)
-            page.wait_for_timeout(400)
+            page.wait_for_timeout(700)
 
-            status = time_select.evaluate("""node => {
-                const unavailable = /予約不可|満席|空席なし|受付終了|販売終了|売り切れ|sold.?out|unavailable|fully booked/i;
-                let current = node;
-                for (let depth = 0; current && depth < 6; depth++, current = current.parentElement) {
-                    const text = (current.innerText || current.textContent || '').trim();
-                    if (unavailable.test(text)) return { unavailable: true, text: text.slice(0, 300) };
-                }
-                return { unavailable: false, text: '' };
-            }""")
-
-            if status.get("unavailable"):
-                log(f"{target['label']}: {time_text} は予約不可表示を検出")
+            # The red "予約不可" badge is rendered outside the select option
+            # itself. Read visible page text after each selection.
+            body_text = page.locator("body").inner_text()
+            unavailable = re.search(
+                r"予約不可|満席|空席なし|受付終了|販売終了|売り切れ|sold.?out|unavailable|fully booked",
+                body_text,
+                re.IGNORECASE,
+            )
+            if unavailable:
+                log(f"{target['label']}: {time_text} 選択後に予約不可/満席表示を検出")
             else:
+                # This is still only a provisional positive signal; the UI
+                # must be checked against the actual booking flow.
                 available.append(time_text)
-                log(f"{target['label']}: {time_text} は予約不可表示なし")
+                log(f"{target['label']}: {time_text} 選択後に予約不可表示なし")
         except Exception as e:
             log(f"{target['label']}: {time_text} 判定失敗 ({type(e).__name__}); 誤通知防止のため除外")
 
