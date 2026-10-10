@@ -169,8 +169,8 @@ def select_date(page, date_str):
 
 
 def get_times(page, target):
-    # Only report a slot when the selected booking time explicitly shows
-    # "即時予約". A missing/ambiguous status must never trigger a notification.
+    # The status badge is a sibling/nearby element of the time <select>,
+    # not necessarily inside an ancestor that contains the select.
     wanted = set(target.get("preferred_times", []))
     time_select = None
     candidates = []
@@ -204,25 +204,36 @@ def get_times(page, target):
         seen.add(time_text)
         try:
             time_select.select_option(label=option_label)
-            page.wait_for_timeout(700)
+            page.wait_for_timeout(600)
 
-            # Inspect the booking panel rather than the entire page, so unrelated
-            # text elsewhere cannot be mistaken for the selected slot's status.
-            status_text = time_select.evaluate("""node => {
+            status = time_select.evaluate("""node => {
+                const terms = /即時予約|予約不可|リクエスト予約|満席|空席なし/;
+                const found = [];
                 let current = node;
-                for (let depth = 0; current && depth < 7; depth++, current = current.parentElement) {
+                // Collect the nearest booking-panel text, and inspect nearby
+                // siblings because the badge is shown beside the time selector.
+                for (let depth = 0; current && depth < 5; depth++, current = current.parentElement) {
                     const text = (current.innerText || current.textContent || '').trim();
-                    if (/即時予約|予約不可|リクエスト予約|満席|空席なし/.test(text)) {
-                        return text.slice(0, 1200);
+                    if (text && terms.test(text)) {
+                        found.push({depth, text: text.slice(0, 1600)});
                     }
                 }
-                return '';
+                const parent = node.parentElement;
+                if (parent) {
+                    for (const sibling of parent.parentElement ? Array.from(parent.parentElement.children) : []) {
+                        const text = (sibling.innerText || sibling.textContent || '').trim();
+                        if (text && terms.test(text)) found.push({depth: 'sibling', text: text.slice(0, 500)});
+                    }
+                }
+                return found.sort((a,b) => String(a.depth).length - String(b.depth).length)[0]?.text || '';
             }""")
 
-            if re.search(r"即時予約", status_text):
+            # Require the explicit positive badge; absence of a readable badge
+            # is unknown, never availability.
+            if re.search(r"即時予約", status):
                 available.append(time_text)
                 log(f"{target['label']}: {time_text} 「即時予約」を検出")
-            elif re.search(r"予約不可|リクエスト予約|満席|空席なし", status_text):
+            elif re.search(r"予約不可|リクエスト予約|満席|空席なし", status):
                 log(f"{target['label']}: {time_text} 即時予約ではない表示を検出")
             else:
                 log(f"{target['label']}: {time_text} 判定できる予約ステータスなし。誤通知防止のため除外")
