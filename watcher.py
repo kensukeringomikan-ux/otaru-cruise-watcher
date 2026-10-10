@@ -171,6 +171,34 @@ def select_date(page, date_str):
 def get_times(page, target):
     # The page has TWO time dropdowns: the schedule overview and the booking
     # widget. Only the booking widget has the status badge ("即時予約"/"予約不可").
+    # Log the booking panel's real controls; never treat the overview schedule as availability.
+    try:
+        controls = page.evaluate("""() => {
+            const heading = [...document.querySelectorAll('body *')].find(el =>
+                el.children.length === 0 && (el.textContent || '').trim() === '今すぐ予約する');
+            let panel = heading;
+            for (let i = 0; panel && i < 8; i++, panel = panel.parentElement) {
+                const t = (panel.innerText || '');
+                if (/参加人数を選択/.test(t) && /時間/.test(t)) break;
+            }
+            if (!panel) return {panelFound: false};
+            const items = [...panel.querySelectorAll('button,select,input,[role="combobox"],[role="button"],[aria-haspopup]')].map(el => ({
+                tag: el.tagName, role: el.getAttribute('role'), name: el.getAttribute('name'),
+                aria: el.getAttribute('aria-label'), title: el.getAttribute('title'),
+                text: (el.innerText || el.value || '').trim().replace(/\s+/g,' ').slice(0,100),
+                cls: String(el.className || '').slice(0,100),
+                html: el.outerHTML.slice(0,250)
+            })).slice(0,50);
+            const badges = [...panel.querySelectorAll('*')].filter(el => {
+                const t = (el.textContent || '').trim();
+                return (t === '即時予約' || t === '予約不可') && el.children.length < 3;
+            }).map(el => ({tag:el.tagName, cls:String(el.className || '').slice(0,100),
+                text:(el.textContent || '').trim(), html:el.outerHTML.slice(0,250)})).slice(0,20);
+            return {panelFound:true, panelText:(panel.innerText || '').slice(0,700), items, badges};
+        }""")
+        log(f"{target['label']}: 予約欄コントロール診断 " + json.dumps(controls, ensure_ascii=False)[:5000])
+    except Exception as e:
+        log(f"{target['label']}: 予約欄コントロール診断失敗 {type(e).__name__}")
     wanted = set(target.get("preferred_times", []))
     selects = page.locator("select")
     candidates_by_select = []
@@ -178,6 +206,9 @@ def get_times(page, target):
     for i in range(selects.count()):
         select = selects.nth(i)
         try:
+            is_overview = select.evaluate("node => !!node.closest('[class*=ProductDetailsView_overview]')")
+            if is_overview:
+                continue
             labels = [s.strip() for s in select.locator("option").all_text_contents()]
             matches = []
             for label in labels:
