@@ -341,49 +341,77 @@ def get_times(page, target):
         log(f"{target['label']}: 予約欄の時刻プルダウンと確認できないため、誤通知防止で除外")
         return []
 
-    # Availability is represented by the selected date's calendar label class
-    # (instant/request/fully_booked). The nearby text "即時予約" also appears
-    # in the static legend, so geometric proximity to that text is not reliable.
+    # Check each time option independently after the requested passenger counts and date
+    # have been selected. A calendar-day class alone is not proof that every time is
+    # bookable, and the page's static "即時予約" legend must never be used as availability.
+    available = []
     try:
-        day_status = time_select.evaluate("""node => {
-            let panel = node;
-            for (let depth = 0; panel && depth < 10; depth++, panel = panel.parentElement) {
-                if (/今すぐ予約する/.test(panel.innerText || '') &&
-                    /参加人数を選択/.test(panel.innerText || '') &&
-                    panel.querySelector('input[name="day"]:checked')) {
-                    const input = panel.querySelector('input[name="day"]:checked');
-                    const label = input.closest('label');
+        option_data = time_select.evaluate("""node => [...node.options].map(o => ({
+            label: (o.textContent || '').trim(),
+            value: o.value,
+            disabled: !!o.disabled,
+            selected: !!o.selected,
+            cls: String(o.className || ''),
+            html: o.outerHTML.slice(0,300)
+        }))""")
+        log(f"{target['label']}: 時刻別オプション " + json.dumps(option_data, ensure_ascii=False)[:2500])
+        option_by_time = {}
+        for option in option_data:
+            match = re.search(r"\\b(?:[01]\\d|2[0-3]):[0-5]\\d\\b", option.get("label", ""))
+            if match:
+                option_by_time[match.group(0)] = option
+
+        for time_text, _ in candidates:
+            option = option_by_time.get(time_text)
+            if not option or option.get("disabled") or not option.get("value"):
+                log(f"{target['label']}: {time_text} は選択不可オプションのため空席なし")
+                continue
+            try:
+                time_select.select_option(option["value"])
+                page.wait_for_timeout(250)
+                selected = time_select.evaluate("""node => {
+                    const o = node.options[node.selectedIndex];
+                    return o ? {value:o.value, label:(o.textContent || '').trim(), disabled:!!o.disabled} : null;
+                }""")
+                if (not selected or selected.get("value") != option["value"] or
+                        selected.get("disabled")):
+                    log(f"{target['label']}: {time_text} の選択確認に失敗")
+                    continue
+
+                # Confirm the selected time belongs to the live booking form and the
+                # next-step control is present. Do not inspect the static legend.
+                form_state = time_select.evaluate("""node => {
+                    let form = node.closest('form');
+                    const panel = node.closest('.widget-calendar__main');
+                    const buttons = [...(panel || form || document).querySelectorAll('button,input[type="submit"]')];
+                    const next = buttons.find(b => (b.innerText || b.value || '').trim().includes('次へ'));
                     return {
-                        className: String(label?.className || ''),
-                        day: (label?.innerText || '').trim(),
-                        selected: !!input.checked
+                        selectedValue: node.value,
+                        selectedLabel: (node.options[node.selectedIndex]?.textContent || '').trim(),
+                        nextFound: !!next,
+                        nextDisabled: next ? !!next.disabled : null,
+                        nextAriaDisabled: next ? next.getAttribute('aria-disabled') : null
                     };
-                }
-            }
-            return null;
-        }""")
-    except Exception:
-        day_status = None
+                }""")
+                if form_state.get("selectedValue") != option["value"]:
+                    log(f"{target['label']}: {time_text} は選択状態が一致しないため除外")
+                    continue
+                # A disabled next button can mean the booking form needs more input,
+                # so do not interpret it as sold out; the actual per-time signal is
+                # whether this passenger/date-specific time option is enabled.
+                available.append(time_text)
+                log(f"{target['label']}: 時刻別判定 {time_text} " +
+                    json.dumps(form_state, ensure_ascii=False))
+            except Exception as e:
+                log(f"{target['label']}: {time_text} の時刻別確認失敗 {type(e).__name__}")
 
-    log(f"{target['label']}: 選択日ステータス " + json.dumps(day_status, ensure_ascii=False))
-    if not day_status or not day_status.get("selected"):
-        log(f"{target['label']}: 選択日の状態を確認できないため、誤通知防止で除外")
-        return []
-    day_classes = set(str(day_status.get("className", "")).split())
-    if "fully_booked" in day_classes or "disabled" in day_classes:
-        log(f"{target['label']}: カレンダー上で満席の日のため空席なし")
-        return []
-    if not ({"instant", "request"} & day_classes):
-        log(f"{target['label']}: カレンダーの日付クラスが不明なため、誤通知防止で除外")
+    except Exception as e:
+        log(f"{target['label']}: 時刻別オプションの確認失敗 {type(e).__name__}")
         return []
 
-    # The booking widget's time dropdown contains the actual bookable departure
-    # instances. Do not infer a time's status from the static legend text.
-    # A date marked instant/request with a real time option means that option
-    # can be selected for booking; preserve only the requested times.
-    available = sorted({time_text for time_text, _ in candidates})
-    log(f"{target['label']}: カレンダー状態={','.join(sorted(day_classes))} / 時刻候補={','.join(sorted({t for t, _ in candidates}))} / 空席判定={','.join(available) if available else 'なし'}")
-    return available
+    result = sorted(set(available))
+    log(f"{target['label']}: 人数・日付選択後の時刻別空席判定={','.join(result) if result else 'なし'}")
+    return result
 
 def check_target(page, target):
     page.goto(URLS[target["course"]], wait_until="domcontentloaded", timeout=60000)
