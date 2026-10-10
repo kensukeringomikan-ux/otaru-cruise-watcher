@@ -169,13 +169,12 @@ def select_date(page, date_str):
 
 
 def get_times(page, target):
-    # Confirm status from the badge visually aligned with the selected time.
-    # Bounding-box proximity avoids picking up the calendar legend elsewhere.
+    # The page has TWO time dropdowns: the schedule overview and the booking
+    # widget. Only the booking widget has the status badge ("即時予約"/"予約不可").
     wanted = set(target.get("preferred_times", []))
-    time_select = None
-    candidates = []
-
     selects = page.locator("select")
+    candidates_by_select = []
+
     for i in range(selects.count()):
         select = selects.nth(i)
         try:
@@ -185,15 +184,46 @@ def get_times(page, target):
                 match = re.search(r"\b(?:[01]\d|2[0-3]):[0-5]\d\b", label)
                 if match and (not wanted or match.group(0) in wanted):
                     matches.append((match.group(0), label))
-            if matches:
-                time_select = select
-                candidates = matches
-                break
+            if not matches:
+                continue
+
+            # Score the dropdown by the surrounding booking-panel text.
+            # The schedule dropdown elsewhere on the page must not be used.
+            context = select.evaluate("""node => {
+                let el = node;
+                let best = '';
+                for (let depth = 0; el && depth < 7; depth++, el = el.parentElement) {
+                    const text = (el.innerText || '').trim();
+                    if (text.length > best.length && text.length < 1800) best = text;
+                    if (/今すぐ予約する/.test(text) && /参加人数を選択/.test(text)) {
+                        return {text, foundBookingPanel: true};
+                    }
+                }
+                return {text: best, foundBookingPanel: false};
+            }""")
+            score = 0
+            if context.get("foundBookingPanel"):
+                score += 100
+            context_text = context.get("text", "")
+            if "日付と時間を指定" in context_text:
+                score += 20
+            if "参加人数を選択" in context_text:
+                score += 20
+            if "今すぐ予約する" in context_text:
+                score += 20
+            candidates_by_select.append((score, select, matches, context_text[:180]))
         except Exception:
             continue
 
-    if time_select is None:
+    if not candidates_by_select:
         log(f"{target['label']}: 時刻選択プルダウンが見つかりません。誤通知防止のため空席なし扱い")
+        return []
+
+    candidates_by_select.sort(key=lambda x: x[0], reverse=True)
+    score, time_select, candidates, context_preview = candidates_by_select[0]
+    log(f"{target['label']}: 時刻プルダウン選択 score={score} / 周辺={context_preview.replace(chr(10), ' ')[:100]}")
+    if score < 20:
+        log(f"{target['label']}: 予約欄の時刻プルダウンと確認できないため、誤通知防止で除外")
         return []
 
     available = []
@@ -208,18 +238,24 @@ def get_times(page, target):
 
             status = time_select.evaluate("""node => {
                 const re = /即時予約|予約不可|リクエスト予約|満席|空席なし/;
+                // Search only nearby elements inside the same booking widget.
+                let panel = node;
+                for (let depth = 0; panel && depth < 8; depth++, panel = panel.parentElement) {
+                    const text = (panel.innerText || '').trim();
+                    if (/今すぐ予約する/.test(text) && /参加人数を選択/.test(text)) break;
+                }
+                if (!panel) return '';
                 const r = node.getBoundingClientRect();
                 const targetY = r.top + r.height / 2;
                 const found = [];
-                for (const el of document.querySelectorAll('body *')) {
+                for (const el of panel.querySelectorAll('*')) {
                     if (el === node || node.contains(el) || el.children.length > 3) continue;
                     const text = (el.innerText || el.textContent || '').trim();
-                    if (!text || text.length > 30 || !re.test(text)) continue;
+                    if (!text || text.length > 24 || !re.test(text)) continue;
                     const b = el.getBoundingClientRect();
                     if (b.width === 0 || b.height === 0) continue;
                     const y = b.top + b.height / 2;
-                    // Status pill is on the same horizontal line as the time field.
-                    if (Math.abs(y - targetY) <= Math.max(18, r.height * 1.5) &&
+                    if (Math.abs(y - targetY) <= Math.max(24, r.height * 2) &&
                         b.right >= r.left - 80 && b.left <= r.right + 260) {
                         found.push({text, distance: Math.abs(y-targetY), width: b.width});
                     }
@@ -230,16 +266,16 @@ def get_times(page, target):
 
             if re.search(r"即時予約", status):
                 available.append(time_text)
-                log(f"{target['label']}: {time_text} 同じ行の「即時予約」を検出")
+                log(f"{target['label']}: {time_text} 予約欄の同じ行に「即時予約」を検出")
             elif re.search(r"予約不可|リクエスト予約|満席|空席なし", status):
-                log(f"{target['label']}: {time_text} 同じ行に予約不可等の表示を検出")
+                log(f"{target['label']}: {time_text} 予約欄の同じ行に予約不可等の表示を検出")
             else:
-                log(f"{target['label']}: {time_text} 同じ行の予約ステータスなし。誤通知防止のため除外")
+                log(f"{target['label']}: {time_text} 予約欄の同じ行の予約ステータスなし。誤通知防止のため除外")
         except Exception as e:
             log(f"{target['label']}: {time_text} 判定失敗 ({type(e).__name__}); 誤通知防止のため除外")
 
     result = sorted(set(available))
-    log(f"{target['label']}: 時刻候補={','.join(sorted(seen)) if seen else 'なし'} / 同じ行で即時予約確認済み={','.join(result) if result else 'なし'}")
+    log(f"{target['label']}: 時刻候補={','.join(sorted(seen)) if seen else 'なし'} / 予約欄で即時予約確認済み={','.join(result) if result else 'なし'}")
     return result
 
 def check_target(page, target):
