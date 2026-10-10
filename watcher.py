@@ -169,8 +169,8 @@ def select_date(page, date_str):
 
 
 def get_times(page, target):
-    # Do not infer availability from the option label. Select each time,
-    # then inspect the rendered booking page for its explicit status badge.
+    # Only report a slot when the selected booking time explicitly shows
+    # "即時予約". A missing/ambiguous status must never trigger a notification.
     wanted = set(target.get("preferred_times", []))
     time_select = None
     candidates = []
@@ -206,26 +206,31 @@ def get_times(page, target):
             time_select.select_option(label=option_label)
             page.wait_for_timeout(700)
 
-            # The red "予約不可" badge is rendered outside the select option
-            # itself. Read visible page text after each selection.
-            body_text = page.locator("body").inner_text()
-            unavailable = re.search(
-                r"予約不可|満席|空席なし|受付終了|販売終了|売り切れ|sold.?out|unavailable|fully booked",
-                body_text,
-                re.IGNORECASE,
-            )
-            if unavailable:
-                log(f"{target['label']}: {time_text} 選択後に予約不可/満席表示を検出")
-            else:
-                # This is still only a provisional positive signal; the UI
-                # must be checked against the actual booking flow.
+            # Inspect the booking panel rather than the entire page, so unrelated
+            # text elsewhere cannot be mistaken for the selected slot's status.
+            status_text = time_select.evaluate("""node => {
+                let current = node;
+                for (let depth = 0; current && depth < 7; depth++, current = current.parentElement) {
+                    const text = (current.innerText || current.textContent || '').trim();
+                    if (/即時予約|予約不可|リクエスト予約|満席|空席なし/.test(text)) {
+                        return text.slice(0, 1200);
+                    }
+                }
+                return '';
+            }""")
+
+            if re.search(r"即時予約", status_text):
                 available.append(time_text)
-                log(f"{target['label']}: {time_text} 選択後に予約不可表示なし")
+                log(f"{target['label']}: {time_text} 「即時予約」を検出")
+            elif re.search(r"予約不可|リクエスト予約|満席|空席なし", status_text):
+                log(f"{target['label']}: {time_text} 即時予約ではない表示を検出")
+            else:
+                log(f"{target['label']}: {time_text} 判定できる予約ステータスなし。誤通知防止のため除外")
         except Exception as e:
             log(f"{target['label']}: {time_text} 判定失敗 ({type(e).__name__}); 誤通知防止のため除外")
 
     result = sorted(set(available))
-    log(f"{target['label']}: 時刻候補={','.join(sorted(seen)) if seen else 'なし'} / 予約可能候補={','.join(result) if result else 'なし'}")
+    log(f"{target['label']}: 時刻候補={','.join(sorted(seen)) if seen else 'なし'} / 即時予約確認済み={','.join(result) if result else 'なし'}")
     return result
 
 def check_target(page, target):
