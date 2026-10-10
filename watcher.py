@@ -169,55 +169,65 @@ def select_date(page, date_str):
 
 
 def get_times(page, target):
-    # The time picker is a native <select>; its options may not appear in
-    # body.inner_text(), so inspect option labels and their disabled states.
+    # A time option alone does not prove availability. Select each candidate
+    # and check the booking widget for its "予約不可" status badge.
     wanted = set(target.get("preferred_times", []))
-    available = []
-    option_labels = []
+    time_select = None
+    candidates = []
 
-    try:
-        selects = page.locator("select")
-        for i in range(selects.count()):
-            select = selects.nth(i)
-            options = select.locator("option")
-            for j in range(options.count()):
-                option = options.nth(j)
-                label = (option.inner_text() or "").strip()
-                if label:
-                    option_labels.append(label)
+    selects = page.locator("select")
+    for i in range(selects.count()):
+        select = selects.nth(i)
+        try:
+            labels = [s.strip() for s in select.locator("option").all_text_contents()]
+            matches = []
+            for label in labels:
                 match = re.search(r"\b(?:[01]\d|2[0-3]):[0-5]\d\b", label)
-                if not match:
-                    continue
-                time_text = match.group(0)
-                if wanted and time_text not in wanted:
-                    continue
+                if match and (not wanted or match.group(0) in wanted):
+                    matches.append((match.group(0), label))
+            if matches:
+                time_select = select
+                candidates = matches
+                break
+        except Exception:
+            continue
 
-                disabled = option.evaluate("""node => {
-                    const select = node.closest('select');
-                    const label = [
-                        node.textContent || '',
-                        node.getAttribute('label') || '',
-                        node.getAttribute('aria-label') || ''
-                    ].join(' ');
-                    const unavailableText = /予約不可|満席|空席なし|受付終了|販売終了|売り切れ|sold.?out|unavailable|fully booked/i;
-                    return node.disabled || node.getAttribute('aria-disabled') === 'true' ||
-                        (select && (select.disabled || select.getAttribute('aria-disabled') === 'true')) ||
-                        unavailableText.test(label);
-                }""")
-                if not disabled:
-                    available.append(time_text)
-    except Exception as e:
-        log(f"時間プルダウンの読み取り失敗: {type(e).__name__}: {e}")
+    if time_select is None:
+        log(f"{target['label']}: 時刻選択プルダウンが見つかりません。誤通知防止のため空席なし扱い")
+        return []
 
-    found = sorted(set(
-        m.group(0)
-        for label in option_labels
-        for m in re.finditer(r"\b(?:[01]\d|2[0-3]):[0-5]\d\b", label)
-        if not wanted or m.group(0) in wanted
-    ))
+    available = []
+    seen = set()
+    for time_text, option_label in candidates:
+        if time_text in seen:
+            continue
+        seen.add(time_text)
+        try:
+            time_select.select_option(label=option_label)
+            page.wait_for_timeout(400)
+
+            status = time_select.evaluate("""node => {
+                const unavailable = /予約不可|満席|空席なし|受付終了|販売終了|売り切れ|sold.?out|unavailable|fully booked/i;
+                let current = node;
+                for (let depth = 0; current && depth < 6; depth++, current = current.parentElement) {
+                    const text = (current.innerText || current.textContent || '').trim();
+                    if (unavailable.test(text)) return { unavailable: true, text: text.slice(0, 300) };
+                }
+                return { unavailable: false, text: '' };
+            }""")
+
+            if status.get("unavailable"):
+                log(f"{target['label']}: {time_text} は予約不可表示を検出")
+            else:
+                available.append(time_text)
+                log(f"{target['label']}: {time_text} は予約不可表示なし")
+        except Exception as e:
+            log(f"{target['label']}: {time_text} 判定失敗 ({type(e).__name__}); 誤通知防止のため除外")
+
     result = sorted(set(available))
-    log(f"{target['label']}: 時刻候補={','.join(found) if found else 'なし'} / 予約可能候補={','.join(result) if result else 'なし'}")
+    log(f"{target['label']}: 時刻候補={','.join(sorted(seen)) if seen else 'なし'} / 予約可能候補={','.join(result) if result else 'なし'}")
     return result
+
 def check_target(page, target):
     page.goto(URLS[target["course"]], wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(1500)
