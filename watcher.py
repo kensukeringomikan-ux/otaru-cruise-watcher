@@ -216,6 +216,23 @@ def select_date(page, date_str):
             selected = calendar.locator('input[name="day"]:checked').count() > 0
             time_select = panel.locator('select[name="productInstanceId"]')
             if selected and time_select.count() and time_select.first.locator("option").count() > 1:
+                # Capture the selected calendar cell's real DOM status, not the static legend.
+                try:
+                    cell_status = label.evaluate("""el => {
+                        const chain = [];
+                        for (let n = el, d = 0; n && d < 4; n = n.parentElement, d++) {
+                            chain.push({
+                                depth: d, tag: n.tagName, cls: String(n.className || ''),
+                                text: (n.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 160),
+                                title: n.getAttribute('title'), aria: n.getAttribute('aria-label'),
+                                html: n.outerHTML.slice(0, 1800)
+                            });
+                        }
+                        return chain;
+                    }""")
+                    log(f"予約日セルのステータスDOM {date_str}: " + json.dumps(cell_status, ensure_ascii=False)[:5000])
+                except Exception as e:
+                    log(f"予約日セルのステータスDOM取得失敗: {type(e).__name__}")
                 log(f"予約カレンダーの日付を選択: {date_str}")
                 return
         except Exception:
