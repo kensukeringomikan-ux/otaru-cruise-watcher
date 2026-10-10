@@ -352,7 +352,7 @@ def get_times(page, target):
             page.wait_for_timeout(800)
 
             status = time_select.evaluate("""node => {
-                const re = /即時予約|予約不可|空席なし/;
+                const re = /即時予約|リクエスト予約|予約不可|空席なし/;
                 // Search only nearby elements inside the same booking widget.
                 let panel = node;
                 for (let depth = 0; panel && depth < 8; depth++, panel = panel.parentElement) {
@@ -382,11 +382,11 @@ def get_times(page, target):
                 return found[0]?.text || '';
             }""")
 
-            if re.search(r"即時予約", status):
+            if re.search(r"即時予約|リクエスト予約", status):
                 available.append(time_text)
-                log(f"{target['label']}: {time_text} 予約欄の同じ行に「即時予約」を検出")
-            elif re.search(r"予約不可|リクエスト予約|満席|空席なし", status):
-                log(f"{target['label']}: {time_text} 予約欄の同じ行に予約不可等の表示を検出")
+                log(f"{target['label']}: {time_text} 予約可能ステータスを検出（{status}）")
+            elif re.search(r"予約不可|満席|空席なし", status):
+                log(f"{target['label']}: {time_text} 予約不可ステータスを検出（{status}）")
             else:
                 log(f"{target['label']}: {time_text} 予約欄の同じ行の予約ステータスなし。誤通知防止のため除外")
         except Exception as e:
