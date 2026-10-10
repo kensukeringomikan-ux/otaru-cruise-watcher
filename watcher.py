@@ -203,7 +203,12 @@ def select_date(page, date_str):
                 inputSummary:[...el.parentElement?.querySelectorAll('input[name="day"]') || []].map(x=>({value:x.value,checked:x.checked,disabled:x.disabled,cls:x.className}))};
         }""")
         diagnostics.append(info)
-        if "fully_booked" in info["cls"] or "disabled" in info["cls"] or info["disabled"] is True:
+        # Trust the actual radio input state over styling classes alone.
+        # The booking widget can leave a "fully_booked" class on a label even
+        # when its day radio is still enabled; skip only truly disabled controls.
+        if info["disabled"] is True:
+            continue
+        if info["disabled"] is None and "disabled" in info["cls"]:
             continue
         try:
             label.click(force=True)
