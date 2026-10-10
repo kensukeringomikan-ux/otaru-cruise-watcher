@@ -169,8 +169,11 @@ def select_date(page, date_str):
 
 
 def get_times(page, target):
+    # Read the actual booking control, not just the visible time text.
+    # Time labels are often nested inside a disabled button, so checking
+    # only the label's own attributes can incorrectly report no/false seats.
     text = page.locator("body").inner_text()
-    found = sorted(set(re.findall(r"\b(?:[01]\d|2[0-3]):[0-5]\d\b", text)))
+    found = sorted(set(re.findall(r"\\b(?:[01]\\d|2[0-3]):[0-5]\\d\\b", text)))
     wanted = set(target.get("preferred_times", []))
     if wanted:
         found = [x for x in found if x in wanted]
@@ -183,13 +186,37 @@ def get_times(page, target):
                 el = loc.nth(i)
                 if not el.is_visible():
                     continue
-                if el.get_attribute("disabled") is None and el.get_attribute("aria-disabled") != "true":
+                is_available = el.evaluate("""node => {
+                    const unavailableText = /満席|空席なし|受付終了|販売終了|売り切れ|sold.?out|unavailable|fully booked/i;
+                    let current = node;
+                    let control = null;
+                    for (let depth = 0; current && depth < 7; depth++, current = current.parentElement) {
+                        const tag = (current.tagName || '').toLowerCase();
+                        const role = current.getAttribute && current.getAttribute('role');
+                        const isControl = ['button', 'a', 'input'].includes(tag) ||
+                            role === 'button' || current.hasAttribute?.('tabindex');
+                        if (isControl) { control = current; break; }
+                    }
+                    if (!control) return false;
+                    if (control.disabled || control.getAttribute('disabled') !== null ||
+                        control.getAttribute('aria-disabled') === 'true') return false;
+                    const cls = String(control.className || '').toLowerCase();
+                    if (/disabled|sold.?out|unavailable|full/.test(cls)) return false;
+                    const label = [
+                        control.innerText || '',
+                        control.getAttribute('aria-label') || '',
+                        control.getAttribute('title') || ''
+                    ].join(' ');
+                    if (unavailableText.test(label)) return false;
+                    return true;
+                }""")
+                if is_available:
                     available.append(t)
                     break
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"時刻判定の読み取り失敗 ({t}): {type(e).__name__}")
+    log(f"{target['label']}: ページ内の対象時刻={','.join(found) if found else 'なし'} / 予約操作可能={','.join(sorted(set(available))) if available else 'なし'}")
     return sorted(set(available))
-
 
 def check_target(page, target):
     page.goto(URLS[target["course"]], wait_until="domcontentloaded", timeout=60000)
