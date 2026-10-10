@@ -211,12 +211,16 @@ def select_date(page, date_str):
         if info["disabled"] is None and "disabled" in info["cls"]:
             continue
         try:
-            # Restore the click path that was confirmed working in the 05:19 run.
-            label.click(force=True)
-            page.wait_for_timeout(700)
-            selected = calendar.locator('input[name="day"]:checked').count() > 0
+            # Click the actual day radio and verify that this exact date became checked.
+            day_input = label.locator('input[name="day"]')
+            if day_input.count():
+                day_input.click(force=True)
+            else:
+                label.click(force=True)
+            page.wait_for_timeout(900)
+            selected = label.locator('input[name="day"]:checked').count() > 0
             time_select = panel.locator('select[name="productInstanceId"]')
-            if selected and time_select.count() and time_select.first.locator("option").count() > 1:
+            if selected:
                 # Capture the selected calendar cell's real DOM status, not the static legend.
                 try:
                     cell_status = label.evaluate("""el => {
