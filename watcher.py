@@ -130,31 +130,40 @@ def select_date(page, date_str):
 
     # Find the calendar by its own DOM ancestry. Avoid relying on the heading
     # locator because the booking app renders several nested text containers.
+    # The booking panel may render a moment later than the page shell. Retry briefly,
+    # then use the calendar's own day-radio controls as a safe fallback.
     calendars = page.locator(".widget-calendar")
     chosen = None
-    for i in range(calendars.count()):
-        candidate = calendars.nth(i)
-        try:
-            info = candidate.evaluate("""node => {
-                let el = node;
-                for (let depth = 0; el && depth < 16; depth++, el = el.parentElement) {
-                    const text = el.innerText || '';
-                    if (/今すぐ予約する/.test(text) &&
-                        /参加人数を選択/.test(text) &&
-                        el.querySelector('input[name="day"]')) {
-                        return {found:true, text:text.slice(0,500)};
+    for attempt in range(8):
+        for i in range(calendars.count()):
+            candidate = calendars.nth(i)
+            try:
+                has_days = candidate.locator('input[name="day"]').count() > 0
+                if not has_days:
+                    continue
+                info = candidate.evaluate("""node => {
+                    let el = node;
+                    for (let depth = 0; el && depth < 16; depth++, el = el.parentElement) {
+                        const text = el.innerText || '';
+                        if (/今すぐ予約する/.test(text) &&
+                            /参加人数を選択/.test(text) &&
+                            el.querySelector('input[name="day"]')) {
+                            return {found:true};
+                        }
                     }
-                }
-                return {found:false};
-            }""")
-            if info.get("found"):
-                chosen = candidate
-                break
-        except Exception:
-            continue
+                    return {found:false};
+                }""")
+                if info.get("found"):
+                    chosen = candidate
+                    break
+            except Exception:
+                continue
+        if chosen is not None:
+            break
+        page.wait_for_timeout(500)
 
     if chosen is None:
-        raise RuntimeError("予約欄のカレンダーが見つかりません")
+        raise RuntimeError("予約欄のカレンダーが見つかりません（表示待ち後も日付選択欄なし）")
 
     calendar = chosen
     # Walk to a stable booking-panel container holding both the calendar and time selector.
