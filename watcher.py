@@ -211,9 +211,15 @@ def select_date(page, date_str):
         if info["disabled"] is None and "disabled" in info["cls"]:
             continue
         try:
-            label.click(force=True)
+            # Select the radio input directly; clicking the surrounding label can
+            # fail to update React state in this calendar under headless Chromium.
+            day_input = label.locator('input[name="day"]')
+            if day_input.count():
+                day_input.check(force=True)
+            else:
+                label.click(force=True)
             page.wait_for_timeout(700)
-            selected = calendar.locator('input[name="day"]:checked').count() > 0
+            selected = label.locator('input[name="day"]:checked').count() > 0
             time_select = panel.locator('select[name="productInstanceId"]')
             if selected and time_select.count() and time_select.first.locator("option").count() > 1:
                 # Capture the selected calendar cell's real DOM status, not the static legend.
