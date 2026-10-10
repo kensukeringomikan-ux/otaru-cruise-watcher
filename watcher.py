@@ -142,19 +142,31 @@ def select_date(page, date_str):
     if wanted_month not in calendar.inner_text():
         raise RuntimeError(f"予約カレンダーの月が一致しません: {wanted_month}")
 
-    days = calendar.locator('input[type="radio"][name="day"]')
-    if days.count() < target.day:
-        raise RuntimeError(f"予約カレンダーの日付が見つかりません: {date_str}")
-    day = days.nth(target.day - 1)
+    # The calendar only renders selectable dates as radios, so the nth radio
+    # is NOT the calendar day number. Match the radio's value exactly instead.
+    day_value = str(target.day)
+    day = calendar.locator('input[type="radio"][name="day"]').filter(
+        has=page.locator("option")
+    )
+    day = calendar.locator('input[type="radio"][name="day"][value="' + day_value + '"]')
+    if day.count() == 0:
+        snapshot = calendar.locator('input[type="radio"][name="day"]').evaluate_all(
+            "els => els.map(el => ({value: el.value, checked: el.checked, disabled: el.disabled}))"
+        )
+        raise RuntimeError(
+            f"予約カレンダーで{target.day}日を選択できません（選択可能日なし）: "
+            + json.dumps(snapshot, ensure_ascii=False)[:500]
+        )
     try:
-        day.check(force=True)
+        day.first.check(force=True)
     except Exception:
-        label = day.locator("xpath=ancestor::label[1]")
+        label = day.first.locator("xpath=ancestor::label[1]")
         if label.count() == 0:
-            label = day.locator("xpath=..")
+            label = day.first.locator("xpath=..")
         label.click(force=True)
     page.wait_for_timeout(900)
     log(f"予約カレンダーの日付を選択: {date_str}")
+
 
 def get_times(page, target):
     # The page has TWO time dropdowns: the schedule overview and the booking
