@@ -126,47 +126,35 @@ def set_people(page, target):
 
 def select_date(page, date_str):
     target = datetime.strptime(date_str, "%Y-%m-%d")
-    ym = f"{target.year}年{target.month}月"
-    day = str(target.day)
+    wanted_month = f"{target.year}年{target.month}月"
+    calendar = page.locator(".widget-calendar").first
+    if calendar.count() == 0:
+        raise RuntimeError("予約カレンダーが見つかりません")
 
     for _ in range(24):
-        body = page.locator("body").inner_text()
-        if ym in body:
+        if wanted_month in calendar.inner_text():
             break
+        next_button = calendar.locator("button.widget-calendar__month__nav__next")
+        if next_button.count() == 0:
+            raise RuntimeError(f"対象月へ移動できません: {wanted_month}")
+        next_button.first.click()
+        page.wait_for_timeout(250)
+    if wanted_month not in calendar.inner_text():
+        raise RuntimeError(f"予約カレンダーの月が一致しません: {wanted_month}")
 
-        clicked = False
-        buttons = page.locator("button")
-        for i in range(buttons.count()):
-            try:
-                b = buttons.nth(i)
-                attrs = " ".join(filter(None, [
-                    b.get_attribute("aria-label"),
-                    b.get_attribute("title"),
-                    b.inner_text(),
-                ])).lower()
-                if any(x in attrs for x in ["next", "次", "翌"]):
-                    b.click()
-                    page.wait_for_timeout(300)
-                    clicked = True
-                    break
-            except Exception:
-                pass
-        if not clicked:
-            break
-
-    candidates = page.get_by_text(day, exact=True)
-    for i in range(candidates.count()):
-        try:
-            el = candidates.nth(i)
-            if el.is_visible():
-                el.click()
-                page.wait_for_timeout(700)
-                return
-        except Exception:
-            pass
-
-    raise RuntimeError(f"日付を選択できません: {date_str}")
-
+    days = calendar.locator('input[type="radio"][name="day"]')
+    if days.count() < target.day:
+        raise RuntimeError(f"予約カレンダーの日付が見つかりません: {date_str}")
+    day = days.nth(target.day - 1)
+    try:
+        day.check(force=True)
+    except Exception:
+        label = day.locator("xpath=ancestor::label[1]")
+        if label.count() == 0:
+            label = day.locator("xpath=..")
+        label.click(force=True)
+    page.wait_for_timeout(900)
+    log(f"予約カレンダーの日付を選択: {date_str}")
 
 def get_times(page, target):
     # The page has TWO time dropdowns: the schedule overview and the booking
